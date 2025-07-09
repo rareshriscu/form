@@ -1,0 +1,15 @@
+{
+  "form_name": "FormularTestare2",
+  "fields": [
+    {
+      "name": "Nume+Prenume",
+      "type": "text",
+      "required": true
+    },
+    {
+      "name": "Mesaj",
+      "type": "textarea",
+      "required": false
+    }
+  ]
+}

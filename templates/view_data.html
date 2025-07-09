@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Date {{ form_name }}{% endblock %}
+{% block header %}Date Formular: {{ form_name }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="nav-links">
+        <a href="{{ url_for('export_pdf', form_name=form_name) }}" class="btn btn-warning">
+            <i class="fas fa-file-pdf"></i> Export PDF
+        </a>
+        <a href="{{ url_for('index') }}" class="btn">
+            <i class="fas fa-arrow-left"></i> Înapoi
+        </a>
+    </div>
+    
+    <div class="stats">
+        <div class="stat-card">
+            <div class="stat-number">{{ rows|length }}</div>
+            <div class="stat-label">Înregistrări Totale</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">{{ columns|length - 2 }}</div>
+            <div class="stat-label">Câmpuri Formular</div>
+        </div>
+    </div>
+    
+    {% if rows %}
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    {% for column in columns %}
+                        <th>{{ column }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    {% for item in row %}
+                        <td>{{ item if item is not none else '' }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-error">
+        <i class="fas fa-info-circle"></i>
+        Nu există date pentru acest formular.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

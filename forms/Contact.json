@@ -1,0 +1,20 @@
+{
+  "form_name": "Contact",
+  "fields": [
+    {
+      "name": "Nume",
+      "type": "text",
+      "required": true
+    },
+    {
+      "name": "Email",
+      "type": "email",
+      "required": true
+    },
+    {
+      "name": "Varsta",
+      "type": "number",
+      "required": false
+    }
+  ]
+}

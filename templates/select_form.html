@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Selectare Formular{% endblock %}
+{% block header %}Selectează Formularul de Completat{% endblock %}
+
+{% block content %}
+<div class="card">
+    {% if forms %}
+    <form method="POST">
+        <div class="form-group">
+            <label for="form_name">
+                <i class="fas fa-clipboard-check"></i> Alege Formularul:
+            </label>
+            <select name="form_name" id="form_name" class="form-control" required>
+                <option value="">-- Selectează un formular --</option>
+                {% for form in forms %}
+                    <option value="{{ form }}">{{ form }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div class="nav-links">
+            <button type="submit" class="btn">
+                <i class="fas fa-arrow-right"></i> Continuă
+            </button>
+            <a href="{{ url_for('index') }}" class="btn btn-warning">
+                <i class="fas fa-arrow-left"></i> Înapoi
+            </a>
+        </div>
+    </form>
+    {% else %}
+    <div class="alert alert-error">
+        <i class="fas fa-exclamation-triangle"></i>
+        Nu există formulare disponibile. Creați mai întâi un formular.
+    </div>
+    <div class="nav-links">
+        <a href="{{ url_for('create_form') }}" class="btn">
+            <i class="fas fa-plus"></i> Creare Formular
+        </a>
+        <a href="{{ url_for('index') }}" class="btn btn-warning">
+            <i class="fas fa-arrow-left"></i> Înapoi
+        </a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

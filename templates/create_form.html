@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Creare Formular{% endblock %}
+{% block header %}Creare Formular Nou{% endblock %}
+
+{% block content %}
+<div class="card">
+    <form method="POST" id="formCreator">
+        <div class="form-group">
+            <label for="form_name">
+                <i class="fas fa-tag"></i> Nume Formular:
+            </label>
+            <input type="text" id="form_name" name="form_name" class="form-control" 
+                   placeholder="Introduceți numele formularului" required>
+        </div>
+        
+        <h3><i class="fas fa-list-ul"></i> Câmpuri Formular</h3>
+        <div id="fields">
+            <div class="field-item">
+                <div class="form-group">
+                    <label>Nume Câmp:</label>
+                    <input type="text" name="field_name" class="form-control" placeholder="Nume câmp" required>
+                </div>
+                <div class="field-controls">
+                    <select name="field_type" class="form-control" style="width: auto;">
+                        <option value="text">Text</option>
+                        <option value="email">Email</option>
+                        <option value="number">Număr</option>
+                        <option value="date">Dată</option>
+                        <option value="textarea">Text Lung</option>
+                    </select>
+                    <div class="checkbox-group">
+                        <input type="checkbox" name="required_0" id="required_0">
+                        <label for="required_0">Obligatoriu</label>
+                    </div>
+                    <button type="button" class="btn btn-danger" onclick="removeField(this)">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="nav-links">
+            <button type="button" class="btn btn-success" onclick="addField()">
+                <i class="fas fa-plus"></i> Adaugă Câmp
+            </button>
+            <button type="submit" class="btn">
+                <i class="fas fa-save"></i> Salvează Formular
+            </button>
+            <a href="{{ url_for('index') }}" class="btn btn-warning">
+                <i class="fas fa-arrow-left"></i> Înapoi
+            </a>
+        </div>
+    </form>
+</div>
+
+<script>
+let fieldCount = 1;
+
+function addField() {
+    const fieldsContainer = document.getElementById('fields');
+    const fieldItem = document.createElement('div');
+    fieldItem.className = 'field-item';
+    fieldItem.innerHTML = `
+        <div class="form-group">
+            <label>Nume Câmp:</label>
+            <input type="text" name="field_name" class="form-control" placeholder="Nume câmp" required>
+        </div>
+        <div class="field-controls">
+            <select name="field_type" class="form-control" style="width: auto;">
+                <option value="text">Text</option>
+                <option value="email">Email</option>
+                <option value="number">Număr</option>
+                <option value="date">Dată</option>
+                <option value="textarea">Text Lung</option>
+            </select>
+            <div class="checkbox-group">
+                <input type="checkbox" name="required_${fieldCount}" id="required_${fieldCount}">
+                <label for="required_${fieldCount}">Obligatoriu</label>
+            </div>
+            <button type="button" class="btn btn-danger" onclick="removeField(this)">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    `;
+    fieldsContainer.appendChild(fieldItem);
+    fieldCount++;
+}
+
+function removeField(button) {
+    const fieldItem = button.closest('.field-item');
+    const fieldsContainer = document.getElementById('fields');
+    
+    if (fieldsContainer.children.length > 1) {
+        fieldItem.remove();
+    } else {
+        alert('Trebuie să existe cel puțin un câmp!');
+    }
+}
+</script>
+{% endblock %}
