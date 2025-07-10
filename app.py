@@ -1,7 +1,7 @@
 import os
 import json
 import pyodbc
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, Response
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -52,6 +52,20 @@ def get_form_data(form_name):
             return columns, rows
     except Exception as e:
         return None, str(e)
+
+def get_single_record(form_name, record_id):
+    """Preia o singură înregistrare din formular"""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT * FROM [{form_name}] WHERE ID = ?", (record_id,))
+            columns = [column[0] for column in cursor.description]
+            row = cursor.fetchone()
+            if row:
+                return dict(zip(columns, row))
+            return None
+    except Exception as e:
+        return None
 
 @app.route('/')
 def index():
@@ -228,6 +242,134 @@ def fill_form():
     forms = [f.replace('.json', '') for f in os.listdir('forms') if f.endswith('.json')]
     return render_template('select_form.html', forms=forms)
 
+@app.route('/fill_form_with_data/<form_name>/<int:record_id>')
+def fill_form_with_data(form_name, record_id):
+    """Pre-completează formularul cu date existente"""
+    file_path = f'forms/{form_name}.json'
+    if not os.path.exists(file_path):
+        flash(f'Formularul "{form_name}" nu există!', 'error')
+        return redirect(url_for('index'))
+    
+    # Încarcă structura formularului
+    with open(file_path, encoding='utf-8') as f:
+        form_data = json.load(f)
+    
+    # Preia datele înregistrării
+    record_data = get_single_record(form_name, record_id)
+    if not record_data:
+        flash(f'Înregistrarea cu ID {record_id} nu există!', 'error')
+        return redirect(url_for('view_data', form_name=form_name))
+    
+    return render_template('fill_form.html', form_data=form_data, record_data=record_data)
+
+@app.route('/edit_record/<form_name>/<int:record_id>')
+def edit_record(form_name, record_id):
+    """Editează o înregistrare existentă"""
+    file_path = f'forms/{form_name}.json'
+    if not os.path.exists(file_path):
+        flash(f'Formularul "{form_name}" nu există!', 'error')
+        return redirect(url_for('index'))
+    
+    # Încarcă structura formularului
+    with open(file_path, encoding='utf-8') as f:
+        form_data = json.load(f)
+    
+    # Preia datele înregistrării
+    record_data = get_single_record(form_name, record_id)
+    if not record_data:
+        flash(f'Înregistrarea cu ID {record_id} nu există!', 'error')
+        return redirect(url_for('view_data', form_name=form_name))
+    
+    return render_template('edit_form.html', form_data=form_data, record_data=record_data, record_id=record_id)
+
+@app.route('/update_record/<form_name>/<int:record_id>', methods=['POST'])
+def update_record(form_name, record_id):
+    """Actualizează o înregistrare în baza de date"""
+    file_path = f'forms/{form_name}.json'
+    if not os.path.exists(file_path):
+        flash(f'Formularul "{form_name}" nu există!', 'error')
+        return redirect(url_for('index'))
+    
+    try:
+        with open(file_path, encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        flash(f'Eroare la citirea formularului: {e}', 'error')
+        return redirect(url_for('index'))
+    
+    fields = data['fields']
+    values = []
+    set_clauses = []
+    
+    # Validare și pregătire date pentru update
+    for field_info in fields:
+        if isinstance(field_info, dict):
+            field_name = field_info['name']
+            field_type = field_info.get('type', 'text')
+            required = field_info.get('required', False)
+        else:
+            field_name = field_info
+            field_type = 'text'
+            required = False
+        
+        value = request.form.get(field_name, '').strip()
+        
+        if required and not value:
+            flash(f'Câmpul "{field_name}" este obligatoriu!', 'error')
+            record_data = get_single_record(form_name, record_id)
+            return render_template('edit_form.html', form_data=data, record_data=record_data, record_id=record_id)
+        
+        # Validare tip de date
+        if value and field_type == 'email' and '@' not in value:
+            flash(f'Câmpul "{field_name}" trebuie să conțină o adresă email validă!', 'error')
+            record_data = get_single_record(form_name, record_id)
+            return render_template('edit_form.html', form_data=data, record_data=record_data, record_id=record_id)
+        
+        if value and field_type == 'number':
+            try:
+                value = int(value)
+            except ValueError:
+                flash(f'Câmpul "{field_name}" trebuie să conțină un număr valid!', 'error')
+                record_data = get_single_record(form_name, record_id)
+                return render_template('edit_form.html', form_data=data, record_data=record_data, record_id=record_id)
+        
+        set_clauses.append(f"[{field_name}] = ?")
+        values.append(value)
+    
+    # Adaugă ID-ul pentru clauza WHERE
+    values.append(record_id)
+    
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            set_clause = ', '.join(set_clauses)
+            sql = f"UPDATE [{form_name}] SET {set_clause} WHERE ID = ?"
+            cursor.execute(sql, values)
+            conn.commit()
+            
+        flash('Înregistrarea a fost actualizată cu succes!', 'success')
+        return redirect(url_for('view_data', form_name=form_name))
+        
+    except Exception as e:
+        flash(f'Eroare la actualizarea datelor: {e}', 'error')
+        record_data = get_single_record(form_name, record_id)
+        return render_template('edit_form.html', form_data=data, record_data=record_data, record_id=record_id)
+
+@app.route('/delete_record/<form_name>/<int:record_id>')
+def delete_record(form_name, record_id):
+    """Șterge o înregistrare din baza de date"""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"DELETE FROM [{form_name}] WHERE ID = ?", (record_id,))
+            conn.commit()
+            
+        flash('Înregistrarea a fost ștearsă cu succes!', 'success')
+    except Exception as e:
+        flash(f'Eroare la ștergerea înregistrării: {e}', 'error')
+    
+    return redirect(url_for('view_data', form_name=form_name))
+
 @app.route('/submit_form/<form_name>', methods=['POST'])
 def submit_form(form_name):
     file_path = f'forms/{form_name}.json'
@@ -310,8 +452,144 @@ def view_data(form_name):
     
     return render_template('view_data.html', form_name=form_name, columns=columns, rows=rows)
 
+@app.route('/download_pdf/<form_name>')
+def download_pdf(form_name):
+    """Generează și descarcă PDF-ul unui formular"""
+    if not os.path.exists(f'forms/{form_name}.json'):
+        flash(f'Formularul "{form_name}" nu există!', 'error')
+        return redirect(url_for('index'))
+    
+    columns, rows = get_form_data(form_name)
+    if columns is None:
+        flash(f'Eroare la citirea datelor: {rows}', 'error')
+        return redirect(url_for('index'))
+    
+    # Genereaza PDF în memorie
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    # Titlu
+    p.setFont("Helvetica-Bold", 16)
+    p.drawString(50, height - 50, f"Date formular: {form_name}")
+    
+    # Data generării
+    p.setFont("Helvetica", 10)
+    p.drawString(50, height - 70, f"Generat la: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    
+    # Header tabel
+    y = height - 100
+    p.setFont("Helvetica-Bold", 10)
+    x = 50
+    for col in columns:
+        p.drawString(x, y, col)
+        x += 100
+    
+    # Linie separator
+    p.line(50, y - 5, width - 50, y - 5)
+    
+    # Date
+    p.setFont("Helvetica", 9)
+    y -= 20
+    for row in rows:
+        if y < 50:  # Pagina noua
+            p.showPage()
+            y = height - 50
+        
+        x = 50
+        for item in row:
+            p.drawString(x, y, str(item)[:15] if item is not None else '')
+            x += 100
+        y -= 15
+    
+    p.save()
+    buffer.seek(0)
+    
+    # Returnează PDF-ul pentru download
+    return Response(
+        buffer.read(),
+        mimetype='application/pdf',
+        headers={
+            'Content-Disposition': f'attachment; filename={form_name}_export.pdf'
+        }
+    )
+
+@app.route('/download_record_pdf/<form_name>/<int:record_id>')
+def download_record_pdf(form_name, record_id):
+    """Generează și descarcă PDF pentru o singură înregistrare"""
+    file_path = f'forms/{form_name}.json'
+    if not os.path.exists(file_path):
+        flash(f'Formularul "{form_name}" nu există!', 'error')
+        return redirect(url_for('index'))
+    
+    # Încarcă structura formularului
+    with open(file_path, encoding='utf-8') as f:
+        form_data = json.load(f)
+    
+    # Preia datele înregistrării
+    record_data = get_single_record(form_name, record_id)
+    if not record_data:
+        flash(f'Înregistrarea cu ID {record_id} nu există!', 'error')
+        return redirect(url_for('view_data', form_name=form_name))
+    
+    # Genereaza PDF în memorie
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    # Titlu
+    p.setFont("Helvetica-Bold", 18)
+    p.drawString(50, height - 50, f"Formular: {form_name}")
+    
+    # Data generării
+    p.setFont("Helvetica", 10)
+    p.drawString(50, height - 70, f"Generat la: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    p.drawString(50, height - 85, f"ID Înregistrare: {record_id}")
+    
+    # Linie separator
+    p.line(50, height - 100, width - 50, height - 100)
+    
+    # Date formular
+    y = height - 130
+    p.setFont("Helvetica", 12)
+    
+    for field_info in form_data['fields']:
+        if isinstance(field_info, dict):
+            field_name = field_info['name']
+        else:
+            field_name = field_info
+        
+        # Numele câmpului
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(50, y, f"{field_name}:")
+        
+        # Valoarea câmpului
+        p.setFont("Helvetica", 12)
+        value = record_data.get(field_name, '')
+        p.drawString(200, y, str(value) if value is not None else '')
+        
+        y -= 25
+        
+        # Pagina nouă dacă este necesar
+        if y < 50:
+            p.showPage()
+            y = height - 50
+    
+    p.save()
+    buffer.seek(0)
+    
+    # Returnează PDF-ul pentru download
+    return Response(
+        buffer.read(),
+        mimetype='application/pdf',
+        headers={
+            'Content-Disposition': f'attachment; filename={form_name}_record_{record_id}.pdf'
+        }
+    )
+
 @app.route('/export_pdf/<form_name>')
 def export_pdf(form_name):
+    """Exportă PDF și îl salvează pe server (funcția originală)"""
     if not os.path.exists(f'forms/{form_name}.json'):
         flash(f'Formularul "{form_name}" nu există!', 'error')
         return redirect(url_for('index'))
@@ -348,7 +626,7 @@ def export_pdf(form_name):
         
         x = 50
         for item in row:
-            p.drawString(x, y, str(item)[:15])  # Limiteaza lungimea textului
+            p.drawString(x, y, str(item)[:15] if item is not None else '')
             x += 100
         y -= 15
     
