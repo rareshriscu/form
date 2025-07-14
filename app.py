@@ -1,3 +1,5 @@
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 import os
 import json
 import pyodbc
@@ -10,6 +12,11 @@ import io
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Necesar pentru flash messages
+
+# Configurare Login Manager
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
 
 # Creeaza directoarele necesare
 os.makedirs("forms", exist_ok=True)
@@ -26,6 +33,59 @@ conn_str = (
 
 def get_connection():
     return pyodbc.connect(conn_str)
+
+# Creare tabel utilizatori în baza de date
+def init_users_table():
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='users' AND xtype='U')
+                CREATE TABLE users (
+                    id INT IDENTITY(1,1) PRIMARY KEY,
+                    username NVARCHAR(100) NOT NULL UNIQUE,
+                    email NVARCHAR(100) NOT NULL UNIQUE,
+                    password NVARCHAR(200) NOT NULL,
+                    role NVARCHAR(20) NOT NULL DEFAULT 'user',
+                    created_at DATETIME DEFAULT GETDATE()
+                )
+            """)
+            conn.commit()
+            
+            # Verifică dacă există admin și creează-l dacă nu există
+            cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
+            if cursor.fetchone()[0] == 0:
+                hashed_password = generate_password_hash('admin123')
+                cursor.execute(
+                    "INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)",
+                    ('admin', 'admin@example.com', hashed_password, 'admin')
+                )
+                conn.commit()
+    except Exception as e:
+        print(f"Eroare la inițializarea tabelului users: {e}")
+
+# Apelăm funcția la start
+init_users_table()
+
+class User(UserMixin):
+    def __init__(self, user_id, username, email, role):
+        self.id = user_id
+        self.username = username
+        self.email = email
+        self.role = role
+
+@login_manager.user_loader
+def load_user(user_id):
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, username, email, role FROM users WHERE id = ?", (user_id,))
+            user_data = cursor.fetchone()
+            if user_data:
+                return User(user_data[0], user_data[1], user_data[2], user_data[3])
+            return None
+    except:
+        return None
 
 def table_exists(table_name):
     """Verifică dacă tabelul există în baza de date"""
@@ -72,8 +132,71 @@ def index():
     forms = [f.replace('.json', '') for f in os.listdir('forms') if f.endswith('.json')]
     return render_template('index.html', forms=forms)
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        try:
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, username, email, password, role FROM users WHERE username = ? OR email = ?", (username, username))
+                user_data = cursor.fetchone()
+                
+                if user_data and check_password_hash(user_data[3], password):
+                    user = User(user_data[0], user_data[1], user_data[2], user_data[4])
+                    login_user(user)
+                    flash('Autentificare reușită!', 'success')
+                    return redirect(url_for('index'))
+                else:
+                    flash('Nume de utilizator sau parolă incorectă', 'error')
+        except Exception as e:
+            flash(f'Eroare la autentificare: {e}', 'error')
+    
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('Ați fost deconectat cu succes.', 'success')
+    return redirect(url_for('index'))
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
+        
+        if password != confirm_password:
+            flash('Parolele nu coincid!', 'error')
+            return render_template('register.html')
+        
+        try:
+            hashed_password = generate_password_hash(password)
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
+                    (username, email, hashed_password)
+                )
+                conn.commit()
+                flash('Cont creat cu succes! Vă puteți autentifica.', 'success')
+                return redirect(url_for('login'))
+        except Exception as e:
+            flash(f'Eroare la crearea contului: {e}', 'error')
+    
+    return render_template('register.html')
+
 @app.route('/create_form', methods=['GET', 'POST'])
+@login_required
 def create_form():
+    if current_user.role != 'admin':
+        flash('Nu aveți permisiunea de a accesa această pagină', 'error')
+        return redirect(url_for('index'))
     if request.method == 'POST':
         form_name = request.form['form_name'].strip()
         fields = [f.strip() for f in request.form.getlist('field_name') if f.strip()]
@@ -357,6 +480,9 @@ def update_record(form_name, record_id):
 
 @app.route('/delete_record/<form_name>/<int:record_id>')
 def delete_record(form_name, record_id):
+    if current_user.role != 'admin':
+        flash('Nu aveți permisiunea de a șterge formulare', 'error')
+        return redirect(url_for('index'))
     """Șterge o înregistrare din baza de date"""
     try:
         with get_connection() as conn:
@@ -441,6 +567,9 @@ def submit_form(form_name):
 
 @app.route('/view_data/<form_name>')
 def view_data(form_name):
+    if not current_user.is_authenticated:
+        flash('Nu aveți permisiunea de a vedea formulare nelogat.', 'error')
+        return redirect(url_for('index'))
     if not os.path.exists(f'forms/{form_name}.json'):
         flash(f'Formularul "{form_name}" nu există!', 'error')
         return redirect(url_for('index'))
@@ -589,6 +718,9 @@ def download_record_pdf(form_name, record_id):
 
 @app.route('/export_pdf/<form_name>')
 def export_pdf(form_name):
+    if not current_user.is_authenticated:
+        flash('Nu aveți permisiunea de a descarca formulare nelogat.', 'error')
+        return redirect(url_for('index'))
     """Exportă PDF și îl salvează pe server (funcția originală)"""
     if not os.path.exists(f'forms/{form_name}.json'):
         flash(f'Formularul "{form_name}" nu există!', 'error')
@@ -642,7 +774,11 @@ def export_pdf(form_name):
     return redirect(url_for('view_data', form_name=form_name))
 
 @app.route('/delete_form/<form_name>')
+@login_required
 def delete_form(form_name):
+    if current_user.role != 'admin':
+        flash('Nu aveți permisiunea de a șterge formulare', 'error')
+        return redirect(url_for('index'))
     try:
         # Sterge fisierul JSON
         if os.path.exists(f'forms/{form_name}.json'):

@@ -10,24 +10,38 @@
             <div class="stat-label">Formulare Active</div>
         </div>
         <div class="stat-card">
-            <div class="stat-number"><i class="fas fa-plus-circle"></i></div>
-            <div class="stat-label">Creare Rapidă</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number"><i class="fas fa-upload"></i></div>
-            <div class="stat-label">Import JSON</div>
+            <div class="stat-number">
+                {% if current_user.is_authenticated %}
+                    <i class="fas fa-user-shield"></i>
+                {% else %}
+                    <i class="fas fa-user"></i>
+                {% endif %}
+            </div>
+            <div class="stat-label">
+                {% if current_user.is_authenticated %}
+                    {{ current_user.role|capitalize }}
+                {% else %}
+                    Vizitator
+                {% endif %}
+            </div>
         </div>
     </div>
     
     <div class="nav-links">
-        <a href="{{ url_for('create_form') }}" class="btn">
-            <i class="fas fa-plus"></i> Creare Formular
-        </a>
-        <a href="{{ url_for('fill_form') }}" class="btn btn-success">
-            <i class="fas fa-edit"></i> Completare Formular
-        </a>
+        {% if current_user.is_authenticated %}
+            <a href="{{ url_for('fill_form') }}" class="btn btn-success">
+                <i class="fas fa-edit"></i> Completare Formular
+            </a>
+        {% endif %}
+        
+        {% if current_user.is_authenticated and current_user.role == 'admin' %}
+            <a href="{{ url_for('create_form') }}" class="btn">
+                <i class="fas fa-plus"></i> Creare Formular
+            </a>
+        {% endif %}
     </div>
     
+    {% if current_user.is_authenticated and current_user.role == 'admin' %}
     <div class="card">
         <h3><i class="fas fa-upload"></i> Încărcare Formular JSON</h3>
         <form action="{{ url_for('upload_form') }}" method="POST" enctype="multipart/form-data">
@@ -40,6 +54,7 @@
             </button>
         </form>
     </div>
+    {% endif %}
     
     {% if forms %}
     <div class="card">

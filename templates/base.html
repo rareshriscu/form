@@ -601,6 +601,23 @@
 
     <div class="container">
         <div class="header">
+            <div class="user-info">
+    {% if current_user.is_authenticated %}
+        <div class="alert alert-success">
+            <i class="fas fa-user"></i> Autentificat ca: {{ current_user.username }} ({{ current_user.role }})
+            <a href="{{ url_for('logout') }}" class="btn btn-sm btn-danger" style="float: right;">
+                <i class="fas fa-sign-out-alt"></i> Deconectare
+            </a>
+        </div>
+    {% else %}
+        <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle"></i> Nu sunteți autentificat.
+            <a href="{{ url_for('login') }}" class="btn btn-sm" style="float: right;">
+                <i class="fas fa-sign-in-alt"></i> Autentificare
+            </a>
+        </div>
+    {% endif %}
+</div>
             <h1 class="glitch">
                 <i class="fas fa-clipboard-list"></i> 
                 {% block header %}Aplicație Gestionare Formulare{% endblock %}
