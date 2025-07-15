@@ -57,28 +57,30 @@
     {% endif %}
     
     {% if forms %}
-    <div class="card">
-        <h3><i class="fas fa-list"></i> Formulare Disponibile</h3>
-        <div class="grid">
-            {% for form in forms %}
-            <div class="card">
-                <h4>{{ form }}</h4>
-                <div class="nav-links">
-                    <a href="{{ url_for('view_data', form_name=form) }}" class="btn">
-                        <i class="fas fa-eye"></i> Vizualizare
-                    </a>
-                    <a href="{{ url_for('export_pdf', form_name=form) }}" class="btn btn-warning">
-                        <i class="fas fa-file-pdf"></i> Export PDF
-                    </a>
-                    <a href="{{ url_for('delete_form', form_name=form) }}" class="btn btn-danger" 
-                       onclick="return confirm('Sigur doriți să ștergeți formularul {{ form }}?')">
-                        <i class="fas fa-trash"></i> Șterge
-                    </a>
-                </div>
+<div class="card">
+    <h3><i class="fas fa-list"></i> Formulare Disponibile</h3>
+    <div class="grid">
+        {% for form in forms %}
+        <div class="card">
+            <h4>{{ form }}</h4>
+            <div class="nav-links">
+                <a href="{{ url_for('view_data', form_name=form) }}" class="btn">
+                    <i class="fas fa-eye"></i> Vizualizare
+                </a>
+                <a href="{{ url_for('export_pdf', form_name=form) }}" class="btn btn-warning">
+                    <i class="fas fa-file-pdf"></i> Export PDF
+                </a>
+                {% if current_user.role == 'admin' %}
+                <a href="{{ url_for('delete_form', form_name=form) }}" class="btn btn-danger" 
+                   onclick="return confirm('Sigur doriți să ștergeți formularul {{ form }}?')">
+                    <i class="fas fa-trash"></i> Șterge
+                </a>
+                {% endif %}
             </div>
-            {% endfor %}
         </div>
+        {% endfor %}
     </div>
-    {% endif %}
+</div>
+{% endif %}
 </div>
 {% endblock %}

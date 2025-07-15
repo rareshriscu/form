@@ -101,12 +101,15 @@ def table_exists(table_name):
     except:
         return False
 
-def get_form_data(form_name):
-    """Preia toate datele dintr-un formular"""
+def get_form_data(form_name, user_id=None):
+    """Preia toate datele dintr-un formular filtrate după user"""
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(f"SELECT * FROM [{form_name}]")
+            if user_id and current_user.role != 'admin':
+                cursor.execute(f"SELECT * FROM [{form_name}] WHERE UserID = ?", (user_id,))
+            else:
+                cursor.execute(f"SELECT * FROM [{form_name}]")
             columns = [column[0] for column in cursor.description]
             rows = cursor.fetchall()
             return columns, rows
@@ -127,9 +130,16 @@ def get_single_record(form_name, record_id):
     except Exception as e:
         return None
 
+# Modific ruta index() pentru a filtra formularele
 @app.route('/')
 def index():
-    forms = [f.replace('.json', '') for f in os.listdir('forms') if f.endswith('.json')]
+    if current_user.is_authenticated:
+        if current_user.role == 'admin':
+            forms = [f.replace('.json', '') for f in os.listdir('forms') if f.endswith('.json')]
+        else:
+            forms = get_user_forms(current_user.id)
+    else:
+        forms = []
     return render_template('index.html', forms=forms)
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -256,9 +266,10 @@ def create_form():
                 columns_str = ", ".join(columns)
                 cursor.execute(f"""
                     CREATE TABLE [{form_name}] (
-                        ID INT IDENTITY(1,1) PRIMARY KEY,
-                        {columns_str},
-                        CreatedAt DATETIME DEFAULT GETDATE()
+                    ID INT IDENTITY(1,1) PRIMARY KEY,
+                    {columns_str},
+                    CreatedAt DATETIME DEFAULT GETDATE(),
+                    UserID INT NOT NULL DEFAULT {current_user.id}
                     )
                 """)
                 conn.commit()
@@ -273,6 +284,20 @@ def create_form():
         return redirect(url_for('index'))
     
     return render_template('create_form.html')
+
+# Adăugăm o funcție pentru a obține formularele utilizatorului curent
+def get_user_forms(user_id=None):
+    forms = []
+    try:
+        for f in os.listdir('forms'):
+            if f.endswith('.json'):
+                form_name = f.replace('.json', '')
+                # Verificăm dacă tabelul există și are câmpul UserID
+                if table_exists(form_name):
+                    forms.append(form_name)
+    except Exception as e:
+        print(f"Eroare la obținerea formularelor: {e}")
+    return forms
 
 @app.route('/upload_form', methods=['POST'])
 def upload_form():
@@ -554,7 +579,9 @@ def submit_form(form_name):
             else:
                 columns = ', '.join([f"[{f}]" for f in fields])
             
-            sql = f"INSERT INTO [{form_name}] ({columns}) VALUES ({placeholders})"
+            # Adăugăm UserID la interogare
+            sql = f"INSERT INTO [{form_name}] ({columns}, UserID) VALUES ({placeholders}, ?)"
+            values.append(current_user.id)  # Adăugăm ID-ul userului curent
             cursor.execute(sql, values)
             conn.commit()
             
@@ -574,7 +601,7 @@ def view_data(form_name):
         flash(f'Formularul "{form_name}" nu există!', 'error')
         return redirect(url_for('index'))
     
-    columns, rows = get_form_data(form_name)
+    columns, rows = get_form_data(form_name, current_user.id if current_user.role != 'admin' else None)
     if columns is None:
         flash(f'Eroare la citirea datelor: {rows}', 'error')
         return redirect(url_for('index'))
@@ -582,7 +609,11 @@ def view_data(form_name):
     return render_template('view_data.html', form_name=form_name, columns=columns, rows=rows)
 
 @app.route('/download_pdf/<form_name>')
+@login_required
 def download_pdf(form_name):
+    if current_user.role != 'admin':
+        flash('Doar administratorii pot descărca toate datele ca PDF', 'error')
+        return redirect(url_for('view_data', form_name=form_name))
     """Generează și descarcă PDF-ul unui formular"""
     if not os.path.exists(f'forms/{form_name}.json'):
         flash(f'Formularul "{form_name}" nu există!', 'error')
@@ -644,72 +675,109 @@ def download_pdf(form_name):
     )
 
 @app.route('/download_record_pdf/<form_name>/<int:record_id>')
+@login_required
 def download_record_pdf(form_name, record_id):
-    """Generează și descarcă PDF pentru o singură înregistrare"""
+    # Verifică existența formularului
     file_path = f'forms/{form_name}.json'
     if not os.path.exists(file_path):
         flash(f'Formularul "{form_name}" nu există!', 'error')
         return redirect(url_for('index'))
-    
+
+    # Verifică permisiunile
+    if current_user.role != 'admin':
+        try:
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    f"SELECT UserID FROM [{form_name}] WHERE ID = ?", 
+                    (record_id,)
+                )
+                result = cursor.fetchone()
+                
+                if not result:
+                    flash('Înregistrarea nu există!', 'error')
+                    return redirect(url_for('view_data', form_name=form_name))
+                
+                if result[0] != current_user.id:
+                    flash('Nu aveți permisiunea de a exporta această înregistrare', 'error')
+                    return redirect(url_for('view_data', form_name=form_name))
+        except Exception as e:
+            flash(f'Eroare la verificarea permisiunilor: {e}', 'error')
+            return redirect(url_for('index'))
+
     # Încarcă structura formularului
-    with open(file_path, encoding='utf-8') as f:
-        form_data = json.load(f)
-    
+    try:
+        with open(file_path, encoding='utf-8') as f:
+            form_data = json.load(f)
+    except Exception as e:
+        flash(f'Eroare la citirea formularului: {e}', 'error')
+        return redirect(url_for('index'))
+
     # Preia datele înregistrării
-    record_data = get_single_record(form_name, record_id)
-    if not record_data:
-        flash(f'Înregistrarea cu ID {record_id} nu există!', 'error')
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT * FROM [{form_name}] WHERE ID = ?", (record_id,))
+            columns = [column[0] for column in cursor.description]
+            record_data = cursor.fetchone()
+            
+            if not record_data:
+                flash('Înregistrarea nu a fost găsită!', 'error')
+                return redirect(url_for('view_data', form_name=form_name))
+    except Exception as e:
+        flash(f'Eroare la preluarea datelor: {e}', 'error')
         return redirect(url_for('view_data', form_name=form_name))
-    
-    # Genereaza PDF în memorie
+
+    # Generează PDF-ul
     buffer = io.BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
-    
-    # Titlu
+
+    # Header PDF
     p.setFont("Helvetica-Bold", 18)
     p.drawString(50, height - 50, f"Formular: {form_name}")
-    
-    # Data generării
     p.setFont("Helvetica", 10)
     p.drawString(50, height - 70, f"Generat la: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
     p.drawString(50, height - 85, f"ID Înregistrare: {record_id}")
     
-    # Linie separator
-    p.line(50, height - 100, width - 50, height - 100)
-    
-    # Date formular
-    y = height - 130
+    # Dacă e admin, afișează și userul
+    if current_user.role == 'admin':
+        p.drawString(50, height - 100, f"User ID: {record_data[columns.index('UserID')]}")
+        y_position = height - 130
+    else:
+        y_position = height - 115
+
+    p.line(50, y_position + 15, width - 50, y_position + 15)
+
+    # Conținut PDF
     p.setFont("Helvetica", 12)
     
     for field_info in form_data['fields']:
-        if isinstance(field_info, dict):
-            field_name = field_info['name']
-        else:
-            field_name = field_info
+        field_name = field_info['name'] if isinstance(field_info, dict) else field_info
         
-        # Numele câmpului
+        # Nume câmp
         p.setFont("Helvetica-Bold", 12)
-        p.drawString(50, y, f"{field_name}:")
+        p.drawString(50, y_position, f"{field_name}:")
         
-        # Valoarea câmpului
+        # Valoare câmp
         p.setFont("Helvetica", 12)
-        value = record_data.get(field_name, '')
-        p.drawString(200, y, str(value) if value is not None else '')
+        try:
+            value = str(record_data[columns.index(field_name)])
+        except (ValueError, IndexError):
+            value = ""
+        p.drawString(200, y_position, value)
         
-        y -= 25
-        
-        # Pagina nouă dacă este necesar
-        if y < 50:
+        y_position -= 25
+        if y_position < 50:  # Pagină nouă dacă necesar
             p.showPage()
-            y = height - 50
-    
+            y_position = height - 50
+
     p.save()
     buffer.seek(0)
-    
-    # Returnează PDF-ul pentru download
+
+    # Răspuns download
     return Response(
-        buffer.read(),
+        buffer.getvalue(),
         mimetype='application/pdf',
         headers={
             'Content-Disposition': f'attachment; filename={form_name}_record_{record_id}.pdf'
@@ -717,60 +785,113 @@ def download_record_pdf(form_name, record_id):
     )
 
 @app.route('/export_pdf/<form_name>')
+@login_required
 def export_pdf(form_name):
-    if not current_user.is_authenticated:
-        flash('Nu aveți permisiunea de a descarca formulare nelogat.', 'error')
-        return redirect(url_for('index'))
-    """Exportă PDF și îl salvează pe server (funcția originală)"""
-    if not os.path.exists(f'forms/{form_name}.json'):
-        flash(f'Formularul "{form_name}" nu există!', 'error')
-        return redirect(url_for('index'))
-    
-    columns, rows = get_form_data(form_name)
-    if columns is None:
-        flash(f'Eroare la citirea datelor: {rows}', 'error')
-        return redirect(url_for('index'))
-    
-    # Genereaza PDF
-    buffer = io.BytesIO()
-    p = canvas.Canvas(buffer, pagesize=letter)
-    width, height = letter
-    
-    # Titlu
-    p.setFont("Helvetica-Bold", 16)
-    p.drawString(50, height - 50, f"Date formular: {form_name}")
-    
-    # Header tabel
-    y = height - 100
-    p.setFont("Helvetica-Bold", 10)
-    x = 50
-    for col in columns:
-        p.drawString(x, y, col)
-        x += 100
-    
-    # Date
-    p.setFont("Helvetica", 9)
-    y -= 20
-    for row in rows:
-        if y < 50:  # Pagina noua
-            p.showPage()
-            y = height - 50
+    """
+    Exportă datele formularului ca PDF cu suport pentru diacritice
+    """
+    try:
+        # ============================================
+        # 1. VERIFICĂRI PERMISIUNI ȘI EXISTENȚĂ DATE
+        # ============================================
+        if current_user.role != 'admin':
+            flash('Doar administratorii pot exporta date complete', 'error')
+            return redirect(url_for('view_data', form_name=form_name))
+
+        if not os.path.exists(f'forms/{form_name}.json'):
+            flash(f'Formularul "{form_name}" nu există!', 'error')
+            return redirect(url_for('index'))
+
+        # ============================================
+        # 2. CONFIGURARE FONTURI CU DIACRITICE
+        # ============================================
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+        from reportlab.lib import colors
         
-        x = 50
-        for item in row:
-            p.drawString(x, y, str(item)[:15] if item is not None else '')
-            x += 100
-        y -= 15
+        # Încărcare fonturi (folosim Helvetica ca fallback)
+        try:
+            pdfmetrics.registerFont(TTFont('ArialUnicode', 'arial.ttf'))
+            bold_font = 'ArialUnicode'
+            regular_font = 'ArialUnicode'
+        except:
+            bold_font = 'Helvetica-Bold'
+            regular_font = 'Helvetica'
+            flash('Fontul cu diacritice nu a fost găsit, folosim Helvetica', 'warning')
+
+        # ============================================
+        # 3. PREGĂTIRE DIRECTOR EXPORT
+        # ============================================
+        export_dir = os.path.join(app.root_path, 'exports')
+        os.makedirs(export_dir, exist_ok=True)
+
+        # ============================================
+        # 4. OBȚINERE DATE
+        # ============================================
+        columns, rows = get_form_data(form_name)
+        if not rows:
+            flash('Nu există date de exportat', 'warning')
+            return redirect(url_for('view_data', form_name=form_name))
+
+        # ============================================
+        # 5. GENERARE PDF PROFESIONALĂ
+        # ============================================
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = os.path.join(export_dir, f'{form_name}_export_{timestamp}.pdf')
+        
+        # Creare document
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+        elements = []
+        
+        # Stiluri
+        styles = getSampleStyleSheet()
+        style_normal = styles['Normal']
+        style_normal.fontName = regular_font
+        style_normal.leading = 12
+        
+        # Header
+        from reportlab.platypus import Paragraph
+        title = Paragraph(f"<b>Export date: {form_name}</b>", styles['Title'])
+        elements.append(title)
+        
+        subtitle = Paragraph(f"Generat la: {datetime.now().strftime('%d/%m/%Y %H:%M')}<br/>"
+                           f"Total înregistrări: {len(rows)}", styles['Normal'])
+        elements.append(subtitle)
+        
+        # Pregătire date tabel
+        table_data = [columns]  # Header
+        for row in rows:
+            table_data.append([str(cell)[:50] if cell else '' for cell in row])  # Limităm la 50 caractere
+        
+        # Creare tabel
+        table = Table(table_data)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#007BFF')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+            ('FONTNAME', (0,0), (-1,0), bold_font),
+            ('FONTNAME', (0,1), (-1,-1), regular_font),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+            ('WORDWRAP', (0,0), (-1,-1), 'ON')
+        ]))
+        
+        elements.append(table)
+        
+        # Generare PDF
+        doc.build(elements)
+        
+        flash('PDF generat cu succes!', 'success')
+        app.logger.info(f'Export PDF reușit: {pdf_path}')
+        
+    except Exception as e:
+        app.logger.error(f'Eroare export PDF: {str(e)}', exc_info=True)
+        flash(f'Eroare la generarea PDF: {str(e)}', 'error')
     
-    p.save()
-    buffer.seek(0)
-    
-    # Salveaza PDF
-    pdf_path = f'exports/{form_name}_export.pdf'
-    with open(pdf_path, 'wb') as f:
-        f.write(buffer.read())
-    
-    flash(f'PDF exportat cu succes în {pdf_path}', 'success')
     return redirect(url_for('view_data', form_name=form_name))
 
 @app.route('/delete_form/<form_name>')

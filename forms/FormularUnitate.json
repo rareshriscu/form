@@ -1,20 +1,25 @@
 {
-  "form_name": "Contact",
+  "form_name": "FormularUnitate",
   "fields": [
+    {
+      "name": "Grad",
+      "type": "text",
+      "required": true
+    },
     {
       "name": "Nume",
       "type": "text",
       "required": true
     },
     {
-      "name": "Email",
-      "type": "email",
+      "name": "Prenume",
+      "type": "text",
       "required": true
     },
     {
       "name": "Varsta",
       "type": "number",
-      "required": false
+      "required": true
     }
   ]
 }

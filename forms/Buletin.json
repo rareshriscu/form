@@ -1,0 +1,25 @@
+{
+  "form_name": "Buletin",
+  "fields": [
+    {
+      "name": "Nume",
+      "type": "text",
+      "required": true
+    },
+    {
+      "name": "Prenume",
+      "type": "text",
+      "required": true
+    },
+    {
+      "name": "Judet",
+      "type": "text",
+      "required": true
+    },
+    {
+      "name": "Serie",
+      "type": "text",
+      "required": true
+    }
+  ]
+}
