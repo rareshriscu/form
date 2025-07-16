@@ -5,24 +5,31 @@
 {% block content %}
 <div class="card">
     <div class="nav-links">
-    <!-- Ascunde butonul mare de export PDF pentru useri obișnuiți -->
-    {% if current_user.role == 'admin' %}
-        <a href="{{ url_for('download_pdf', form_name=form_name) }}" class="btn btn-success">
-            <i class="fas fa-download"></i> Download PDF (toate datele)
+        {% if current_user.role == 'admin' %}
+        <form action="{{ url_for('send_pdf_email', form_name=form_name) }}" method="POST" style="display: inline;">
+            <button type="submit" class="btn btn-info">
+                <i class="fas fa-paper-plane"></i> Trimite pe email
+            </button>
+        </form>
+        {% endif %}
+        <!-- Ascunde butonul mare de export PDF pentru useri obișnuiți -->
+        {% if current_user.role == 'admin' %}
+            <a href="{{ url_for('download_pdf', form_name=form_name) }}" class="btn btn-success">
+                <i class="fas fa-download"></i> Download PDF (toate datele)
+            </a>
+        {% endif %}
+        
+        <!-- Păstrează butonul de export PDF pentru întregul tabel doar pentru admin -->
+        {% if current_user.role == 'admin' %}
+            <a href="{{ url_for('export_pdf', form_name=form_name) }}" class="btn btn-warning">
+                <i class="fas fa-file-pdf"></i> Export PDF (toate datele)
+            </a>
+        {% endif %}
+        
+        <a href="{{ url_for('index') }}" class="btn">
+            <i class="fas fa-arrow-left"></i> Înapoi
         </a>
-    {% endif %}
-    
-    <!-- Păstrează butonul de export PDF pentru întregul tabel doar pentru admin -->
-    {% if current_user.role == 'admin' %}
-        <a href="{{ url_for('export_pdf', form_name=form_name) }}" class="btn btn-warning">
-            <i class="fas fa-file-pdf"></i> Export PDF (toate datele)
-        </a>
-    {% endif %}
-    
-    <a href="{{ url_for('index') }}" class="btn">
-        <i class="fas fa-arrow-left"></i> Înapoi
-    </a>
-</div>
+    </div>
     
     <div class="stats">
         <div class="stat-card">
@@ -66,6 +73,11 @@
                                class="btn btn-sm btn-success" title="Download PDF">
                                 <i class="fas fa-file-pdf"></i>
                             </a>
+                            <form action="{{ url_for('send_record_email', form_name=form_name, record_id=row[0]) }}" method="POST" style="display: inline;">
+                                <button type="submit" class="btn btn-sm btn-warning" title="Trimite pe email">
+                                    <i class="fas fa-paper-plane"></i>
+                                </button>
+                            </form>
                             <a href="{{ url_for('delete_record', form_name=form_name, record_id=row[0]) }}" 
                                class="btn btn-sm btn-danger" title="Șterge"
                                onclick="return confirm('Sigur doriți să ștergeți această înregistrare?')">
@@ -129,10 +141,22 @@
     border-color: #138496;
 }
 
+.btn-warning {
+    background-color: #ffc107;
+    border-color: #ffc107;
+    color: #212529;
+}
+
+.btn-warning:hover {
+    background-color: #e0a800;
+    border-color: #d39e00;
+}
+
 .data-table th:last-child,
 .data-table td:last-child {
     text-align: center;
-    width: 200px;
+    width: 250px;
 }
 </style>
 {% endblock %}
+[file content end]

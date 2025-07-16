@@ -9,6 +9,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 import io
+import requests
+import json
+import base64
+from secret.key import URL
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Necesar pentru flash messages
@@ -33,6 +37,40 @@ conn_str = (
 
 def get_connection():
     return pyodbc.connect(conn_str)
+
+def send_email_via_google_script(recipient, subject, body=None, pdf_path=None):
+    # Configurare
+    script_url = URL  # URL DE LA GOOGLE
+    
+    # Pregătește datele
+    payload = {
+        "recipient": recipient,
+        "subject": subject,
+        "body": body or " ",
+    }
+    
+    # Adaugă PDF dacă există
+    if pdf_path:
+        with open(pdf_path, "rb") as f:
+            pdf_data = base64.b64encode(f.read()).decode("utf-8")
+        payload.update({
+            "pdfData": pdf_data,
+            "pdfName": pdf_path.split("/")[-1]
+        })
+    
+    # Trimite request
+    headers = {"Content-Type": "application/json"}
+    response = requests.post(
+        script_url,
+        data=json.dumps(payload),
+        headers=headers
+    )
+    
+    # Procesează răspuns
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"Error {response.status_code}: {response.text}")
 
 # Creare tabel utilizatori în baza de date
 def init_users_table():
@@ -674,6 +712,90 @@ def download_pdf(form_name):
         }
     )
 
+@app.route('/send_pdf_email/<form_name>', methods=['POST'])
+@login_required
+def send_pdf_email(form_name):
+    """Rută nouă care trimite doar pe email"""
+    try:
+        # 1. Generează PDF-ul (folosește aceeași logică ca la download)
+        if not os.path.exists(f'forms/{form_name}.json'):
+            flash(f'Formularul "{form_name}" nu există!', 'error')
+            return redirect(url_for('index'))
+
+        columns, rows = get_form_data(form_name)
+        if columns is None:
+            flash(f'Eroare la citirea datelor: {rows}', 'error')
+            return redirect(url_for('index'))
+        
+        # Genereaza PDF în memorie
+        buffer = io.BytesIO()
+        p = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+            
+        # Titlu
+        p.setFont("Helvetica-Bold", 16)
+        p.drawString(50, height - 50, f"Date formular: {form_name}")
+            
+        # Data generării
+        p.setFont("Helvetica", 10)
+        p.drawString(50, height - 70, f"Generat la: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+            
+        # Header tabel
+        y = height - 100
+        p.setFont("Helvetica-Bold", 10)
+        x = 50
+        for col in columns:
+            p.drawString(x, y, col)
+            x += 100
+            
+        # Linie separator
+        p.line(50, y - 5, width - 50, y - 5)
+            
+        # Date
+        p.setFont("Helvetica", 9)
+        y -= 20
+        for row in rows:
+            if y < 50:  # Pagina noua
+                p.showPage()
+                y = height - 50
+            
+            x = 50
+            for item in row:
+                p.drawString(x, y, str(item)[:15] if item is not None else '')
+                x += 100
+            y -= 15
+            
+        p.save()
+        buffer.seek(0)
+        
+        # 2. Salvează temporar pe server
+        temp_path = f"temp_email_{form_name}_{current_user.id}.pdf"
+        with open(temp_path, 'wb') as f:
+            f.write(buffer.getvalue())
+        
+        # 3. Folosește funcția ta existentă pentru trimitere email
+        result = send_email_via_google_script(
+            recipient=current_user.email,
+            subject=f"Export {form_name}",
+            body=f"""
+            <p>Bună ziua,</p>
+            <p>Atașat găsiți exportul formularului <b>{form_name}</b>.</p>
+            <p>Data generării: {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+            <p>Vă mulțumim!</p>
+            """,
+            pdf_path=temp_path
+        )
+        
+        # 4. Șterge fișierul temporar
+        os.remove(temp_path)
+        
+        flash('PDF trimis cu succes pe email!', 'success')
+        
+    except Exception as e:
+        flash(f'Eroare la trimitere email: {str(e)}', 'error')
+    
+    return redirect(url_for('view_data', form_name=form_name))
+
 @app.route('/download_record_pdf/<form_name>/<int:record_id>')
 @login_required
 def download_record_pdf(form_name, record_id):
@@ -917,5 +1039,107 @@ def delete_form(form_name):
     
     return redirect(url_for('index'))
 
+@app.route('/send_record_email/<form_name>/<int:record_id>', methods=['POST'])
+@login_required
+def send_record_email(form_name, record_id):
+    """Trimite un singur record pe email"""
+    try:
+        # Verifică existența formularului
+        file_path = f'forms/{form_name}.json'
+        if not os.path.exists(file_path):
+            flash(f'Formularul "{form_name}" nu există!', 'error')
+            return redirect(url_for('index'))
+
+        # Încarcă structura formularului
+        with open(file_path, encoding='utf-8') as f:
+            form_data = json.load(f)
+
+        # Preia datele înregistrării
+        record_data = get_single_record(form_name, record_id)
+        if not record_data:
+            flash('Înregistrarea nu a fost găsită!', 'error')
+            return redirect(url_for('view_data', form_name=form_name))
+
+        # Verifică permisiunile
+        if current_user.role != 'admin' and record_data.get('UserID') != current_user.id:
+            flash('Nu aveți permisiunea de a trimite această înregistrare pe email', 'error')
+            return redirect(url_for('view_data', form_name=form_name))
+
+        # Generează PDF-ul
+        buffer = io.BytesIO()
+        p = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+
+        # Header PDF
+        p.setFont("Helvetica-Bold", 18)
+        p.drawString(50, height - 50, f"Formular: {form_name}")
+        p.setFont("Helvetica", 10)
+        p.drawString(50, height - 70, f"Generat la: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        p.drawString(50, height - 85, f"ID Înregistrare: {record_id}")
+        
+        # Dacă e admin, afișează și userul
+        if current_user.role == 'admin':
+            p.drawString(50, height - 100, f"User ID: {record_data.get('UserID', 'N/A')}")
+            y_position = height - 130
+        else:
+            y_position = height - 115
+
+        p.line(50, y_position + 15, width - 50, y_position + 15)
+
+        # Conținut PDF
+        p.setFont("Helvetica", 12)
+        
+        for field_info in form_data['fields']:
+            field_name = field_info['name'] if isinstance(field_info, dict) else field_info
+            
+            # Nume câmp
+            p.setFont("Helvetica-Bold", 12)
+            p.drawString(50, y_position, f"{field_name}:")
+            
+            # Valoare câmp
+            p.setFont("Helvetica", 12)
+            value = str(record_data.get(field_name, ''))
+            p.drawString(200, y_position, value)
+            
+            y_position -= 25
+            if y_position < 50:  # Pagină nouă dacă necesar
+                p.showPage()
+                y_position = height - 50
+
+        p.save()
+        buffer.seek(0)
+        
+        # Salvează temporar pe server
+        temp_path = f"temp_email_{form_name}_record_{record_id}_{current_user.id}.pdf"
+        with open(temp_path, 'wb') as f:
+            f.write(buffer.getvalue())
+        
+        # Folosește funcția existentă pentru trimitere email
+        result = send_email_via_google_script(
+            recipient=current_user.email,
+            subject=f"Înregistrare {record_id} din formularul {form_name}",
+            body=f"""
+            <p>Bună ziua,</p>
+            <p>Atașat găsiți înregistrarea <b>{record_id}</b> din formularul <b>{form_name}</b>.</p>
+            <p>Data generării: {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+            <p>Vă mulțumim!</p>
+            """,
+            pdf_path=temp_path
+        )
+        
+        # Șterge fișierul temporar
+        os.remove(temp_path)
+        
+        flash('Înregistrarea a fost trimisă cu succes pe email!', 'success')
+        
+    except Exception as e:
+        flash(f'Eroare la trimitere email: {str(e)}', 'error')
+    
+    return redirect(url_for('view_data', form_name=form_name))
+
+
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+    
